@@ -16,6 +16,14 @@ Options:
     --image_size=<int>              resize all frames to this size [default: 64]
 
     --use_infogan                   when specified infogan loss is used
+    
+    --use_cgan_proj_discr           when CGANS with projection discriminator is used
+    
+    --n_categories                  number of categories for projection discriminator [default: 4]
+    
+    --spectral_normalization        use spectral normalization, true if use_cgan_proj_discr
+    
+    --resnet                        use resnet instead of dcgan
 
     --use_categories                when specified ground truth categories are used to
                                     train CategoricalVideoDiscriminator
@@ -50,6 +58,7 @@ import functools
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from models import SNResNetProjectionDiscriminator, SNResNetProjectionVideoDiscriminator
 
 import models
 
@@ -100,7 +109,21 @@ if __name__ == "__main__":
     dim_z_content = int(args['--dim_z_content'])
     dim_z_motion = int(args['--dim_z_motion'])
     dim_z_category = int(args['--dim_z_category'])
-
+    
+    use_cgan_proj_discr = args['--use_cgan_proj_discr']
+    print('use_cgan_proj_discr')
+    print(use_cgan_proj_discr)
+    
+    spectral_normalization = False
+    
+    if args['--resnet']:
+        use_cgan_proj_discr = False
+    
+    if use_cgan_proj_discr:
+        n_categories = 4#int(args['--n_categories'])
+    else:
+        n_categories = None
+    
     dataset = data.VideoFolderDataset(args['<dataset>'], cache=os.path.join(args['<dataset>'], 'local.db'))
     image_dataset = data.ImageDataset(dataset, image_transforms)
     image_loader = DataLoader(image_dataset, batch_size=image_batch, drop_last=True, num_workers=2, shuffle=True)
@@ -108,14 +131,20 @@ if __name__ == "__main__":
     video_dataset = data.VideoDataset(dataset, 16, 2, video_transforms)
     video_loader = DataLoader(video_dataset, batch_size=video_batch, drop_last=True, num_workers=2, shuffle=True)
 
-    generator = models.VideoGenerator(n_channels, dim_z_content, dim_z_category, dim_z_motion, video_length)
+    generator = models.VideoGenerator(n_channels, dim_z_content, dim_z_category, dim_z_motion, video_length, use_cgan_proj_discr=use_cgan_proj_discr, n_categories=n_categories, resnet=args['--resnet'])
 
-    image_discriminator = build_discriminator(args['--image_discriminator'], n_channels=n_channels,
-                                              use_noise=args['--use_noise'], noise_sigma=float(args['--noise_sigma']))
+    if not use_cgan_proj_discr:
+        image_discriminator = build_discriminator(args['--image_discriminator'], n_channels=n_channels,
+                                                  use_noise=args['--use_noise'], noise_sigma=float(args['--noise_sigma']))
+    else:
+        image_discriminator = SNResNetProjectionDiscriminator(num_features=16, spectral_normalization=spectral_normalization)
 
-    video_discriminator = build_discriminator(args['--video_discriminator'], dim_categorical=dim_z_category,
-                                              n_channels=n_channels, use_noise=args['--use_noise'],
-                                              noise_sigma=float(args['--noise_sigma']))
+    if not use_cgan_proj_discr:
+        video_discriminator = build_discriminator(args['--video_discriminator'], dim_categorical=dim_z_category,
+                                                  n_channels=n_channels, use_noise=args['--use_noise'],
+                                                  noise_sigma=float(args['--noise_sigma']))
+    else:
+        video_discriminator = SNResNetProjectionVideoDiscriminator(num_features=16, num_classes=n_categories, spectral_normalization=spectral_normalization)
 
     if torch.cuda.is_available():
         generator.cuda()
@@ -128,6 +157,9 @@ if __name__ == "__main__":
                       args['<log_folder>'],
                       use_cuda=torch.cuda.is_available(),
                       use_infogan=args['--use_infogan'],
-                      use_categories=args['--use_categories'])
+                      use_categories=args['--use_categories'],
+                      use_cgan_proj_discr=use_cgan_proj_discr,
+                      video_length=16, n_categories=n_categories)
 
     trainer.train(generator, image_discriminator, video_discriminator)
+
