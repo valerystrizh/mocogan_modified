@@ -5,16 +5,19 @@ import os
 import sys
 import warnings
 
-def extract_frames(file_addr,output, sheight=64):
+def extract_frames(file_addr,output, sheight=64,top_crop=0,left_crop=0,right_crop=-1,bottom_crop=-1):
     vid = cv2.VideoCapture(file_addr)
     success, frame = vid.read()
+    frame = frame[top_crop:bottom_crop,left_crop:right_crop]
     if success:
         count = 1
-        for _ in range(int(vid.get(cv2.CAP_PROP_FRAME_COUNT))):
+        while True:
             success,tmp = vid.read()
             if not success:
                 break
+            tmp = tmp[top_crop:bottom_crop,left_crop:right_crop]
             frame = np.hstack((frame,tmp))
+            
             count += 1
         print('Number of frame(s): {} done!'.format(count))
         width = frame.shape[1]
@@ -27,7 +30,8 @@ def extract_frames(file_addr,output, sheight=64):
         warnings.warn('The file \"{}\" is corrupted. Couldn\'t open it.'.format(file_addr))
         
         
-def preprocessing_videos(dataset_location = './dataset',output='./processed_dataset',vtype='.avi'):
+def preprocessing_videos(dataset_location = './dataset',output='./processed_dataset',vtype='.avi', sheight = 64,
+    top_crop=0,left_crop=0,right_crop=-1,bottom_crop=-1):
     filt = list(filter(lambda x: os.path.isdir(os.path.join(dataset_location,x)), os.listdir(dataset_location)))
     assert len(filt)>0,\
     'You have to put your videos inside of their category subfolders and proceed pre-processing.'
@@ -44,5 +48,5 @@ def preprocessing_videos(dataset_location = './dataset',output='./processed_data
             outfile = os.path.join(cur_path_out,j.replace(vtype,'.jpg'))
             inpfile = os.path.join(cur_path,j)
             print('({})'.format(inpfile),end=':   ')
-            extract_frames(inpfile,outfile)
+            extract_frames(file_addr = inpfile, output = outfile, sheight=sheight, top_crop = top_crop, left_crop = left_crop, right_crop = right_crop, bottom_crop = bottom_crop)
         print('\n')
