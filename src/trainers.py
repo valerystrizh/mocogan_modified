@@ -183,7 +183,10 @@ class Trainer(object):
             #real_y = self.one_hot_expand(real_y, self.n_categories, self.video_length)
             #real_y = real_y.expand(self.video_length, real_y.shape[0]).t().flatten()
             real_labels = discriminator(batch, real_y)
-            fake_labels = discriminator(fake_batch.detach(), generated_categories)
+            if n_content_categories > 0:
+                fake_labels = discriminator(fake_batch.detach(), generated_content_categories)
+            else:
+                fake_labels = discriminator(fake_batch.detach(), generated_categories)
         else:
             real_labels = discriminator(batch)
             fake_labels = discriminator(fake_batch.detach())
