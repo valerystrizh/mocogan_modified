@@ -23,6 +23,8 @@ Options:
     
     --resnet_without_proj           use resnet instead of dcgan and not use proj
 
+    --n_categories=<count>          number of categories for projection discriminator [default: 4]
+
     --use_categories                when specified ground truth categories are used to
                                     train CategoricalVideoDiscriminator
 
@@ -117,7 +119,7 @@ if __name__ == "__main__":
     if args['--use_cgan_proj_discr']:
         use_cgan_proj_discr = True
         resnet=True
-        n_categories = 4#int(args['--n_categories'])
+        n_categories = int(args['--n_categories'])
     else:
         use_cgan_proj_discr = False
         resnet=False
