@@ -299,10 +299,11 @@ class SNResNetProjectionVideoDiscriminator(nn.Module):
         self.l7 = nn.Linear(num_features * 16, 1)
         if num_classes > 0:
             self.l_y = nn.Embedding(num_classes, num_features * 16)
+            if spectral_normalization:
+                self.l_y = utils.spectral_norm(self.l_y)
             
         if spectral_normalization:
             self.l7 = utils.spectral_norm(self.l7)
-            self.l_y = utils.spectral_norm(self.l_y)
         self._initialize()
 
     def _initialize(self):
@@ -434,10 +435,11 @@ class SNResNetProjectionDiscriminator(nn.Module):
         self.l7 = nn.Linear(num_features * 16, 1)
         if num_classes > 0:
             self.l_y = nn.Embedding(num_classes, num_features * 16)
+            if spectral_normalization:
+                self.l_y = utils.spectral_norm(self.l_y)
 
         if spectral_normalization:
             self.l7 = utils.spectral_norm(self.l7)
-            self.l_y = utils.spectral_norm(self.l_y)
 
         self._initialize()
 
