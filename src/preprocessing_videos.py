@@ -8,6 +8,9 @@ import warnings
 def extract_frames(file_addr,output, sheight=64,top_crop=0,left_crop=0,right_crop=-1,bottom_crop=-1):
     vid = cv2.VideoCapture(file_addr)
     success, frame = vid.read()
+    min_dim = np.min((frame.shape[1],frame.shape[0]))
+    # frame = cv2.resize(frame,(int(min_dim),int(min_dim)))
+    frame = frame[0:min_dim,0:min_dim]
     frame = frame[top_crop:bottom_crop,left_crop:right_crop]
     if success:
         count = 1
@@ -15,6 +18,9 @@ def extract_frames(file_addr,output, sheight=64,top_crop=0,left_crop=0,right_cro
             success,tmp = vid.read()
             if not success:
                 break
+            min_dim = np.min((tmp.shape[1],tmp.shape[0]))
+            # tmp = cv2.resize(tmp,(int(min_dim),int(min_dim)))
+            tmp = tmp[0:min_dim,0:min_dim]
             tmp = tmp[top_crop:bottom_crop,left_crop:right_crop]
             frame = np.hstack((frame,tmp))
             
