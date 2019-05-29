@@ -14,6 +14,18 @@ import PIL
 
 class VideoFolderDataset(torch.utils.data.Dataset):
     def __init__(self, folder, cache, min_len=32):
+        self.weizmann_id = {
+            "daria": 0,
+            "denis": 1,
+            "eli": 2,
+            "ido": 3,
+            "ira": 4,
+            "lena": 5,
+            "lyova": 6,
+            "moshe": 7,
+            "shahar": 8
+        }
+
         dataset = ImageFolder(folder)
         self.total_frames = 0
         self.lengths = []
@@ -39,10 +51,25 @@ class VideoFolderDataset(torch.utils.data.Dataset):
         self.cumsum = np.cumsum([0] + self.lengths)
         print("Total number of frames {}".format(np.sum(self.lengths)))
 
+    def content_category(self, path):
+        path, file_name = os.path.split(path)
+        dir = os.path.split(os.path.split(path)[0])[-1]
+        if dir == 'actions':
+            # Action dataset as in original repo
+            idx = int(file_name[-6:-4]) % 8
+        elif dir == 'actions_Weizmann':
+            # Full action dataset
+            name = file_name.split('_')[0]
+            idx = self.weizmann_id[name]
+        else:
+            print("Content category ID parse ERROR")
+            idx = 0
+        return idx
+
     def __getitem__(self, item):
         path, label = self.images[item]
         im = PIL.Image.open(path)
-        return im, label
+        return im, label, self.content_category(path)
 
     def __len__(self):
         return len(self.images)
@@ -62,7 +89,7 @@ class ImageDataset(torch.utils.data.Dataset):
             video_id = 0
             frame_num = 0
 
-        video, target = self.dataset[video_id]
+        video, target, content_categories = self.dataset[video_id]
         video = np.array(video)
 
         horizontal = video.shape[1] > video.shape[0]
@@ -77,7 +104,7 @@ class ImageDataset(torch.utils.data.Dataset):
         if frame.shape[0] == 0:
             print("video {}. From {} to {}. num {}".format(video.shape, i_from, i_to, item))
 
-        return {"images": self.transforms(frame), "categories": target}
+        return {"images": self.transforms(frame), "categories": target, "content_categories": content_categories}
 
     def __len__(self):
         return self.dataset.cumsum[-1]
@@ -91,7 +118,7 @@ class VideoDataset(torch.utils.data.Dataset):
         self.transforms = transform if transform is not None else lambda x: x
 
     def __getitem__(self, item):
-        video, target = self.dataset[item]
+        video, target, content_categories = self.dataset[item]
         video = np.array(video)
 
         horizontal = video.shape[1] > video.shape[0]
@@ -112,7 +139,7 @@ class VideoDataset(torch.utils.data.Dataset):
         frames = np.split(video, video_len, axis=1 if horizontal else 0)
         selected = np.array([frames[s_id] for s_id in subsequence_idx])
 
-        return {"images": self.transforms(selected), "categories": target}
+        return {"images": self.transforms(selected), "categories": target, "content_categories": content_categories}
 
     def __len__(self):
         return len(self.dataset)

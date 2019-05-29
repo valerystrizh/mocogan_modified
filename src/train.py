@@ -24,6 +24,7 @@ Options:
     --resnet_without_proj           use resnet instead of dcgan and not use proj
 
     --n_categories=<count>          number of categories for projection discriminator [default: 4]
+    --n_content_categories=<count>  number of categories for projection discriminator [default: 0]
 
     --use_categories                when specified ground truth categories are used to
                                     train CategoricalVideoDiscriminator
@@ -111,6 +112,8 @@ if __name__ == "__main__":
     dim_z_category = int(args['--dim_z_category'])
     
     spectral_normalization = True
+
+    n_content_categories = int(args['--n_content_categories'])
     
     if args['--resnet_without_proj']:
         resnet=True      
@@ -132,7 +135,9 @@ if __name__ == "__main__":
     video_dataset = data.VideoDataset(dataset, 16, 2, video_transforms)
     video_loader = DataLoader(video_dataset, batch_size=video_batch, drop_last=True, num_workers=2, shuffle=True)
 
-    generator = models.VideoGenerator(n_channels, dim_z_content, dim_z_category, dim_z_motion, video_length, use_cgan_proj_discr=use_cgan_proj_discr, n_categories=n_categories, resnet=resnet)
+    generator = models.VideoGenerator(n_channels, dim_z_content, dim_z_category, dim_z_motion, video_length,
+                                      use_cgan_proj_discr=use_cgan_proj_discr, n_categories=n_categories,
+                                      n_content_categories=n_content_categories, resnet=resnet)
     print('generator')
     print(generator)
 
@@ -140,7 +145,8 @@ if __name__ == "__main__":
         image_discriminator = build_discriminator(args['--image_discriminator'], n_channels=n_channels,
                                                   use_noise=args['--use_noise'], noise_sigma=float(args['--noise_sigma']))
     else:
-        image_discriminator = SNResNetProjectionDiscriminator(num_features=16, spectral_normalization=spectral_normalization)
+        image_discriminator = SNResNetProjectionDiscriminator(num_features=16, num_classes=n_content_categories,
+                                                              spectral_normalization=spectral_normalization)
 
     print('image_discriminator')
     print(image_discriminator)
@@ -168,6 +174,7 @@ if __name__ == "__main__":
                       use_infogan=args['--use_infogan'],
                       use_categories=args['--use_categories'],
                       use_cgan_proj_discr=use_cgan_proj_discr,
+                      n_content_categories=n_content_categories,
                       video_length=16, n_categories=n_categories)
 
     trainer.train(generator, image_discriminator, video_discriminator)

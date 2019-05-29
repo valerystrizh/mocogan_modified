@@ -533,7 +533,7 @@ def _upsample(x):
 class GBlock(nn.Module):
 
     def __init__(self, in_ch, out_ch, h_ch=None, ksize=3, pad=1,
-                 activation=F.relu, upsample=False, num_classes=0):
+                 activation=F.relu, upsample=False, num_classes=0, n_content_categories=0):
         super(GBlock, self).__init__()
 
         self.activation = activation
@@ -542,6 +542,7 @@ class GBlock(nn.Module):
         if h_ch is None:
             h_ch = out_ch
         self.num_classes = num_classes
+        self.n_content_categories = n_content_categories
 
         # Register layrs
         self.c1 = nn.Conv2d(in_ch, h_ch, ksize, 1, pad)
@@ -551,6 +552,11 @@ class GBlock(nn.Module):
                 num_classes, in_ch)
             self.b2 = CategoricalConditionalBatchNorm2d(
                 num_classes, h_ch)
+            if self.n_content_categories > 0:
+                self.b1_content = CategoricalConditionalBatchNorm2d(
+                    n_content_categories, in_ch)
+                self.b2_content = CategoricalConditionalBatchNorm2d(
+                    n_content_categories, h_ch)
         else:
             self.b1 = nn.BatchNorm2d(in_ch)
             self.b2 = nn.BatchNorm2d(h_ch)
@@ -563,8 +569,8 @@ class GBlock(nn.Module):
         if self.learnable_sc:
             init.xavier_uniform_(self.c_sc.weight.tensor, gain=1)
 
-    def forward(self, x, y=None, z=None, **kwargs):
-        return self.shortcut(x) + self.residual(x, y, z)
+    def forward(self, x, y=None, y_content=None, z=None, **kwargs):
+        return self.shortcut(x) + self.residual(x, y, y_content, z)
 
     def shortcut(self, x, **kwargs):
         if self.learnable_sc:
@@ -575,9 +581,12 @@ class GBlock(nn.Module):
         else:
             return x
 
-    def residual(self, x, y=None, z=None, **kwargs):
+    def residual(self, x, y=None, y_content=None, z=None, **kwargs):
         if y is not None:
             h = self.b1(x, y, **kwargs)
+            if y_content is not None:
+                h_content = self.b1_content(x, y_content, **kwargs)
+                h = h + h_content
         else:
             h = self.b1(x)
         h = self.activation(h)
@@ -585,7 +594,12 @@ class GBlock(nn.Module):
             h = _upsample(h)
         h = self.c1(h)
         if y is not None:
-            h = self.b2(h, y, **kwargs)
+            h_ = self.b2(h, y, **kwargs)
+            if y_content is not None:
+                h_content = self.b2_content(h, y_content, **kwargs)
+                h = h_ + h_content
+            else:
+                h = h_
         else:
             h = self.b2(h)
         return self.c2(self.activation(h))
@@ -594,7 +608,7 @@ class ResNetGenerator(nn.Module):
     """Generator generates 64x64."""
 
     def __init__(self, num_features=64, dim_z=128, bottom_width=4,
-                 activation=F.relu, num_classes=0, distribution='normal'):
+                 activation=F.relu, num_classes=0, n_content_categories=0, distribution='normal'):
         super(ResNetGenerator, self).__init__()
         self.num_features = num_features
         self.dim_z = dim_z
@@ -607,16 +621,16 @@ class ResNetGenerator(nn.Module):
 
         self.block2 = GBlock(num_features * 16, num_features * 8,
                             activation=activation, upsample=True,
-                            num_classes=num_classes)
+                            num_classes=num_classes, n_content_categories=n_content_categories)
         self.block3 = GBlock(num_features * 8, num_features * 4,
                             activation=activation, upsample=True,
-                            num_classes=num_classes)
+                            num_classes=num_classes, n_content_categories=n_content_categories)
         self.block4 = GBlock(num_features * 4, num_features * 2,
                             activation=activation, upsample=True,
-                            num_classes=num_classes)
+                            num_classes=num_classes, n_content_categories=n_content_categories)
         self.block5 = GBlock(num_features * 2, num_features,
                             activation=activation, upsample=True,
-                            num_classes=num_classes)
+                            num_classes=num_classes, n_content_categories=n_content_categories)
         self.b6 = nn.BatchNorm2d(num_features)
         self.conv6 = nn.Conv2d(num_features, 3, 1, 1)
 
@@ -624,18 +638,21 @@ class ResNetGenerator(nn.Module):
         init.xavier_uniform_(self.l1.weight.tensor)
         init.xavier_uniform_(self.conv7.weight.tensor)
 
-    def forward(self, z, y=None, **kwargs):
+    def forward(self, z, y=None, y_content=None, **kwargs):
         h = self.l1(z.squeeze()).view(z.size(0), -1, self.bottom_width, self.bottom_width)
         
         y = y.long()
+        if y_content is not None:
+            y_content = y_content.long()
+
         for i in range(2, 6):
-            h = getattr(self, 'block{}'.format(i))(h, y, **kwargs)
+            h = getattr(self, 'block{}'.format(i))(h, y, y_content, **kwargs)
         h = self.activation(self.b6(h))
         return torch.tanh(self.conv6(h))
                 
 class VideoGenerator(nn.Module):
     def __init__(self, n_channels, dim_z_content, dim_z_category, dim_z_motion,
-                 video_length, ngf=32, use_cgan_proj_discr=False, n_categories=None, resnet=True):
+                 video_length, ngf=32, use_cgan_proj_discr=False, n_content_categories=0, n_categories=None, resnet=True):
         super(VideoGenerator, self).__init__()
 
         self.n_channels = n_channels
@@ -647,12 +664,12 @@ class VideoGenerator(nn.Module):
         self.n_categories = n_categories
         self.resnet = True
 
-        dim_z = dim_z_motion + dim_z_category + dim_z_content
+        dim_z = dim_z_motion + dim_z_content
 
         self.recurrent = nn.GRUCell(dim_z_motion, dim_z_motion)
 
         if self.use_cgan_proj_discr or self.resnet:
-            self.main = ResNetGenerator(num_features=32, dim_z=dim_z, num_classes=n_categories, bottom_width=4)
+            self.main = ResNetGenerator(num_features=32, dim_z=dim_z, num_classes=n_categories, n_content_categories=n_content_categories, bottom_width=4)
         else:
             self.main = nn.Sequential(
                 nn.ConvTranspose2d(dim_z, ngf * 8, 4, 1, 0, bias=False),
@@ -685,17 +702,18 @@ class VideoGenerator(nn.Module):
 
         return z_m
 
-    def sample_z_categ(self, num_samples, video_len):
+    def sample_z_categ(self, num_samples, video_len, n_content_categories=0):
         video_len = video_len if video_len is not None else self.video_length
 
-        if self.dim_z_category <= 0:
+        dim_z_category = n_content_categories if n_content_categories > 0 else self.dim_z_category
+
+        if dim_z_category <= 0:
             return None, np.zeros(num_samples)
 
-        classes_to_generate = np.random.randint(self.dim_z_category, size=num_samples)
-        one_hot = np.zeros((num_samples, self.dim_z_category), dtype=np.float32)
+        classes_to_generate = np.random.randint(dim_z_category, size=num_samples)
+        one_hot = np.zeros((num_samples, dim_z_category), dtype=np.float32)
         one_hot[np.arange(num_samples), classes_to_generate] = 1
         one_hot_video = np.repeat(one_hot, video_len, axis=0)
-
         one_hot_video = torch.from_numpy(one_hot_video)
 
         if torch.cuda.is_available():
@@ -713,17 +731,25 @@ class VideoGenerator(nn.Module):
             content = content.cuda()
         return Variable(content)
 
-    def sample_z_video(self, num_samples, video_len=None):
+    def sample_z_video(self, num_samples, video_len=None, n_content_categories=0):
         z_content = self.sample_z_content(num_samples, video_len)
         z_category, z_category_labels = self.sample_z_categ(num_samples, video_len)
+        if n_content_categories > 0:
+            z_content_category, z_content_category_labels = self.sample_z_categ(num_samples, video_len, n_content_categories=n_content_categories)
         z_motion = self.sample_z_m(num_samples, video_len)
 
-        if z_category is not None:
-            z = torch.cat([z_content, z_category, z_motion], dim=1)
-        else:
-            z = torch.cat([z_content, z_motion], dim=1)
+        # if z_category is not None:
+        #     if n_content_categories > 0:
+        #         z = torch.cat([z_content, z_content_category, z_category, z_motion], dim=1)
+        #     else:
+        #         z = torch.cat([z_content, z_category, z_motion], dim=1)
+        # else:
+        z = torch.cat([z_content, z_motion], dim=1)
 
-        return z, z_category_labels
+        if n_content_categories > 0:
+            return z, z_category_labels, z_content_category_labels
+        else:
+            return z, z_category_labels, None
 
     def one_hot_v(self, data, num_classes):
         ones = torch.sparse.torch.eye(num_classes)
@@ -733,34 +759,48 @@ class VideoGenerator(nn.Module):
         ones = self.one_hot_v(data, num_classes)
         return ones.expand(len_expand, ones.shape[0], ones.shape[1]).transpose(0, 1).reshape(-1, num_classes)
     
-    def sample_videos(self, num_samples, video_len=None, use_cgan_proj_discr=False):
+    def sample_videos(self, num_samples, video_len=None, use_cgan_proj_discr=False, n_content_categories=0):
         video_len = video_len if video_len is not None else self.video_length
 
-        z, z_category_labels = self.sample_z_video(num_samples, video_len)
+        z, z_category_labels, z_content_category_labels = self.sample_z_video(num_samples, video_len, n_content_categories=n_content_categories)
+
         z_category_labels = torch.from_numpy(z_category_labels)
         if torch.cuda.is_available():
             z_category_labels = z_category_labels.cuda()
         #z_category_labels = self.one_hot_expand(z_category_labels, self.n_categories, video_len)
         z_category_labels_exp = z_category_labels.expand(video_len, z_category_labels.shape[0]).t().flatten()
 
+        if n_content_categories > 0:
+            z_content_category_labels = torch.from_numpy(z_content_category_labels)
+            if torch.cuda.is_available():
+                z_content_category_labels = z_content_category_labels.cuda()
+            # z_category_labels = self.one_hot_expand(z_category_labels, self.n_categories, video_len)
+            z_content_category_labels_exp = z_content_category_labels.expand(video_len, z_content_category_labels.shape[0]).t().flatten()
+
         #h = self.main(z.view(z.size(0), z.size(1), 1, 1))
         if not use_cgan_proj_discr:
             h = self.main(z.view(z.size(0), z.size(1), 1, 1))
         else:
-            h = self.main(z.view(z.size(0), z.size(1), 1, 1), z_category_labels_exp)
+            if n_content_categories > 0:
+                h = self.main(z.view(z.size(0), z.size(1), 1, 1), z_category_labels_exp, z_content_category_labels_exp)
+            else:
+                h = self.main(z.view(z.size(0), z.size(1), 1, 1), z_category_labels_exp)
             
         h = h.view(h.size(0) // video_len, video_len, self.n_channels, h.size(3), h.size(3))
-
         h = h.permute(0, 2, 1, 3, 4)
-        return h, z_category_labels
 
-    def sample_images(self, num_samples, use_cgan_proj_discr=False):
-        z, z_category_labels = self.sample_z_video(num_samples * self.video_length * 2)
+        if n_content_categories > 0:
+            return h, z_category_labels, z_content_category_labels
+        else:
+            return h, z_category_labels, None
+
+    def sample_images(self, num_samples, use_cgan_proj_discr=False, n_content_categories=0):
+        z, z_category_labels, z_content_category_labels = self.sample_z_video(num_samples * self.video_length * 2, n_content_categories=n_content_categories)
 
         z_category_labels = torch.from_numpy(z_category_labels)
         #z_category_labels = self.one_hot_expand(z_category_labels, self.n_categories, self.video_length)
         z_category_labels = z_category_labels.expand(self.video_length, z_category_labels.shape[0]).t().flatten()
-        
+
         j = np.sort(np.random.choice(z.size(0), num_samples, replace=False)).astype(np.int64)
         z = z[j, ::]
         #z_category_labels = z_category_labels[j, ::]
@@ -769,16 +809,25 @@ class VideoGenerator(nn.Module):
 
         if torch.cuda.is_available():
             z_category_labels = z_category_labels.cuda()
+
+        if n_content_categories > 0:
+            z_content_category_labels = torch.from_numpy(z_content_category_labels)
+            # z_category_labels = self.one_hot_expand(z_category_labels, self.n_categories, self.video_length)
+            z_content_category_labels = z_content_category_labels.expand(self.video_length, z_content_category_labels.shape[0]).t().flatten()
+            z_content_category_labels = z_content_category_labels[j]
+            if torch.cuda.is_available():
+                z_content_category_labels = z_content_category_labels.cuda()
             
         if not use_cgan_proj_discr:
             h = self.main(z)
-            
-            return h, None
+            return h, None, None
         else:
-            h = self.main(z, z_category_labels)
-            
-            return h, z_category_labels.long()
-
+            if n_content_categories > 0:
+                h = self.main(z, z_category_labels, z_content_category_labels)
+                return h, z_category_labels.long(), z_content_category_labels.long()
+            else:
+                h = self.main(z, z_category_labels)
+                return h, z_category_labels.long(), None
 
     def get_gru_initial_state(self, num_samples):
         return Variable(T.FloatTensor(num_samples, self.dim_z_motion).normal_())

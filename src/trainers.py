@@ -45,10 +45,12 @@ def one_hot_to_class(tensor):
 
 class Trainer(object):
     def __init__(self, image_sampler, video_sampler, log_interval, train_batches, log_folder, use_cuda=False,
+                 n_content_categories=False,
                  use_infogan=True, use_categories=True, use_cgan_proj_discr=False, video_length=16, n_categories=4):
 
         self.use_categories = use_categories
         self.use_cgan_proj_discr = use_cgan_proj_discr
+        self.n_content_categories = n_content_categories
 
         self.gan_criterion = nn.BCEWithLogitsLoss()
         self.category_criterion = nn.CrossEntropyLoss()
@@ -85,7 +87,7 @@ class Trainer(object):
         real_batch = sample_true()
 
         batch_size = real_batch['images'].size(0)
-        fake_batch, generated_categories = sample_fake(batch_size)
+        fake_batch, generated_categories, generated_content_categories = sample_fake(batch_size)
 
         real_labels, real_categorical = discriminator(Variable(real_batch['images']))
         fake_labels, fake_categorical = discriminator(fake_batch)
@@ -163,16 +165,19 @@ class Trainer(object):
         ones = ones.index_select(0, data)
         return ones.expand(len_expand, ones.shape[0], ones.shape[1]).transpose(0, 1).reshape(-1, num_classes)
 
-    def train_discriminator(self, discriminator, sample_true, sample_fake, opt, batch_size, use_categories, use_cgan_proj_discr):
+    def train_discriminator(self, discriminator, sample_true, sample_fake, opt, batch_size, use_categories, use_cgan_proj_discr, n_content_categories=0):
         opt.zero_grad()
 
         real_batch = sample_true()
         batch = Variable(real_batch['images'], requires_grad=False)
-        real_y = Variable(real_batch['categories'], requires_grad=False)
+        if n_content_categories > 0:
+            real_y = Variable(real_batch['content_categories'], requires_grad=False)
+        else:
+            real_y = Variable(real_batch['categories'], requires_grad=False)
 
         # util.show_batch(batch.data)
 
-        fake_batch, generated_categories = sample_fake(batch_size, self.use_cgan_proj_discr)
+        fake_batch, generated_categories, generated_content_categories = sample_fake(batch_size, self.use_cgan_proj_discr, n_content_categories=n_content_categories)
 
         if use_cgan_proj_discr:
             #real_y = self.one_hot_expand(real_y, self.n_categories, self.video_length)
@@ -199,16 +204,13 @@ class Trainer(object):
 
         return l_discriminator
 
-    def train_generator(self,
-                        image_discriminator, video_discriminator,
-                        sample_fake_images, sample_fake_videos,
-                        opt):
+    def train_generator(self, image_discriminator, video_discriminator, sample_fake_images, sample_fake_videos, opt):
 
         opt.zero_grad()
 
         # train on images
 
-        fake_batch, generated_categories = sample_fake_images(self.image_batch_size, self.use_cgan_proj_discr)
+        fake_batch, generated_categories, generated_content_categories = sample_fake_images(self.image_batch_size, self.use_cgan_proj_discr)
         if not self.use_cgan_proj_discr:
             fake_labels, fake_categorical = image_discriminator(fake_batch)
         else:
@@ -219,7 +221,7 @@ class Trainer(object):
 
         # train on videos
 
-        fake_batch, generated_categories = sample_fake_videos(self.video_batch_size, self.use_cgan_proj_discr)
+        fake_batch, generated_categories, generated_content_categories = sample_fake_videos(self.video_batch_size, self.use_cgan_proj_discr)
         if not self.use_cgan_proj_discr:
             fake_labels, fake_categorical = video_discriminator(fake_batch)
         else:
@@ -254,11 +256,11 @@ class Trainer(object):
 
         # training loop
 
-        def sample_fake_image_batch(batch_size, use_cgan_proj_discr=False):
-            return generator.sample_images(batch_size, use_cgan_proj_discr)
+        def sample_fake_image_batch(batch_size, use_cgan_proj_discr=False, n_content_categories=0):
+            return generator.sample_images(batch_size, use_cgan_proj_discr=use_cgan_proj_discr, n_content_categories=n_content_categories)
 
-        def sample_fake_video_batch(batch_size, use_cgan_proj_discr=False):
-            return generator.sample_videos(batch_size, use_cgan_proj_discr=use_cgan_proj_discr)
+        def sample_fake_video_batch(batch_size, use_cgan_proj_discr=False, n_content_categories=0):
+            return generator.sample_videos(batch_size, use_cgan_proj_discr=use_cgan_proj_discr, n_content_categories=n_content_categories)
 
         def init_logs():
             return {'l_gen': 0, 'l_image_dis': 0, 'l_video_dis': 0}
@@ -281,7 +283,9 @@ class Trainer(object):
             # train image discriminator
             l_image_dis = self.train_discriminator(image_discriminator, self.sample_real_image_batch,
                                                    sample_fake_image_batch, opt_image_discriminator,
-                                                   self.image_batch_size, use_categories=False, use_cgan_proj_discr=False)
+                                                   self.image_batch_size, use_categories=False,
+                                                   use_cgan_proj_discr=(self.n_content_categories>0),
+                                                   n_content_categories=self.n_content_categories)
 
             # train video discriminator
             l_video_dis = self.train_discriminator(video_discriminator, self.sample_real_video_batch,
@@ -320,10 +324,10 @@ class Trainer(object):
 
                     generator.eval()
 
-                    images, _ = sample_fake_image_batch(self.image_batch_size, self.use_cgan_proj_discr)
+                    images, _, _ = sample_fake_image_batch(self.image_batch_size, self.use_cgan_proj_discr)
                     logger.image_summary("Images", images_to_numpy(images), batch_num)
 
-                    videos, _ = sample_fake_video_batch(self.video_batch_size, use_cgan_proj_discr=True)
+                    videos, _, _ = sample_fake_video_batch(self.video_batch_size, use_cgan_proj_discr=True)
                     logger.video_summary("Videos", videos_to_numpy(videos), batch_num)
 
                     torch.save(generator, os.path.join(self.log_folder, 'generator_%05d.pytorch' % batch_num))
