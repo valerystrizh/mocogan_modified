@@ -1,3 +1,6 @@
+import cv2
+import numpy as np
+
 def ACD(filename):
     """
     Calculates Average Content Distance for the given short video
