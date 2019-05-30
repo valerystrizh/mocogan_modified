@@ -533,8 +533,10 @@ def _upsample(x):
 class GBlock(nn.Module):
 
     def __init__(self, in_ch, out_ch, h_ch=None, ksize=3, pad=1,
-                 activation=F.relu, upsample=False, num_classes=0, n_content_categories=0):
+                 activation=F.relu, upsample=False, num_classes=0, n_content_categories=0, content_only_style=False):
         super(GBlock, self).__init__()
+
+        self.content_only_style = content_only_style
 
         self.activation = activation
         self.upsample = upsample
@@ -583,10 +585,12 @@ class GBlock(nn.Module):
 
     def residual(self, x, y=None, y_content=None, z=None, **kwargs):
         if y is not None:
-            h = self.b1(x, y, **kwargs)
-            if y_content is not None:
-                h_content = self.b1_content(x, y_content, **kwargs)
-                h = h + h_content
+            if self.content_only_style and y_content is not None:
+                h = self.b1(x, y_content, **kwargs)
+            else:
+                h = self.b1(x, y, **kwargs)
+                if y_content is not None:
+                    h = h + self.b1_content(x, y_content, **kwargs)
         else:
             h = self.b1(x)
         h = self.activation(h)
@@ -594,12 +598,12 @@ class GBlock(nn.Module):
             h = _upsample(h)
         h = self.c1(h)
         if y is not None:
-            h_ = self.b2(h, y, **kwargs)
-            if y_content is not None:
-                h_content = self.b2_content(h, y_content, **kwargs)
-                h = h_ + h_content
+            if self.content_only_style and y_content is not None:
+                h = self.b2(h, y_content, **kwargs)
             else:
-                h = h_
+                h = self.b2(h, y, **kwargs)
+                if y_content is not None:
+                    h = h + self.b2_content(h, y_content, **kwargs)
         else:
             h = self.b2(h)
         return self.c2(self.activation(h))
@@ -608,7 +612,7 @@ class ResNetGenerator(nn.Module):
     """Generator generates 64x64."""
 
     def __init__(self, num_features=64, dim_z=128, bottom_width=4,
-                 activation=F.relu, num_classes=0, n_content_categories=0, distribution='normal'):
+                 activation=F.relu, num_classes=0, n_content_categories=0, distribution='normal', content_only_style=False):
         super(ResNetGenerator, self).__init__()
         self.num_features = num_features
         self.dim_z = dim_z
@@ -621,16 +625,20 @@ class ResNetGenerator(nn.Module):
 
         self.block2 = GBlock(num_features * 16, num_features * 8,
                             activation=activation, upsample=True,
-                            num_classes=num_classes, n_content_categories=n_content_categories)
+                            num_classes=num_classes, n_content_categories=n_content_categories,
+                            content_only_style=content_only_style)
         self.block3 = GBlock(num_features * 8, num_features * 4,
                             activation=activation, upsample=True,
-                            num_classes=num_classes, n_content_categories=n_content_categories)
+                            num_classes=num_classes, n_content_categories=n_content_categories,
+                            content_only_style=content_only_style)
         self.block4 = GBlock(num_features * 4, num_features * 2,
                             activation=activation, upsample=True,
-                            num_classes=num_classes, n_content_categories=n_content_categories)
+                            num_classes=num_classes, n_content_categories=n_content_categories,
+                            content_only_style=content_only_style)
         self.block5 = GBlock(num_features * 2, num_features,
                             activation=activation, upsample=True,
-                            num_classes=num_classes, n_content_categories=n_content_categories)
+                            num_classes=num_classes, n_content_categories=n_content_categories,
+                            content_only_style=content_only_style)
         self.b6 = nn.BatchNorm2d(num_features)
         self.conv6 = nn.Conv2d(num_features, 3, 1, 1)
 
@@ -652,8 +660,11 @@ class ResNetGenerator(nn.Module):
                 
 class VideoGenerator(nn.Module):
     def __init__(self, n_channels, dim_z_content, dim_z_category, dim_z_motion,
-                 video_length, ngf=32, use_cgan_proj_discr=False, n_content_categories=0, n_categories=None, resnet=True):
+                 video_length, ngf=32, use_cgan_proj_discr=False, n_content_categories=0, n_categories=None,
+                 resnet=True, content_only_style=False):
         super(VideoGenerator, self).__init__()
+
+        self.content_only_style = content_only_style
 
         self.n_channels = n_channels
         self.dim_z_content = dim_z_content
@@ -665,11 +676,15 @@ class VideoGenerator(nn.Module):
         self.resnet = True
 
         dim_z = dim_z_motion + dim_z_content
+        if content_only_style:
+            dim_z += dim_z_category
 
         self.recurrent = nn.GRUCell(dim_z_motion, dim_z_motion)
 
         if self.use_cgan_proj_discr or self.resnet:
-            self.main = ResNetGenerator(num_features=32, dim_z=dim_z, num_classes=n_categories, n_content_categories=n_content_categories, bottom_width=4)
+            self.main = ResNetGenerator(num_features=32, dim_z=dim_z, num_classes=n_categories,
+                                        n_content_categories=n_content_categories, bottom_width=4,
+                                        content_only_style=self.content_only_style)
         else:
             self.main = nn.Sequential(
                 nn.ConvTranspose2d(dim_z, ngf * 8, 4, 1, 0, bias=False),
@@ -744,7 +759,10 @@ class VideoGenerator(nn.Module):
         #     else:
         #         z = torch.cat([z_content, z_category, z_motion], dim=1)
         # else:
-        z = torch.cat([z_content, z_motion], dim=1)
+        if not self.content_only_style:
+            z = torch.cat([z_content, z_motion], dim=1)
+        else:
+            z = torch.cat([z_content, z_category, z_motion], dim=1)
 
         if n_content_categories > 0:
             return z, z_category_labels, z_content_category_labels

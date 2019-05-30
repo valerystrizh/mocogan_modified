@@ -26,6 +26,9 @@ Options:
     --n_categories=<count>          number of categories for projection discriminator [default: 4]
     --n_content_categories=<count>  number of categories for projection discriminator [default: 0]
 
+    --content_only_style            when specified only content style will be injected
+                                    while motion category (one_hot) will be concatenated with the latent z vector
+
     --use_categories                when specified ground truth categories are used to
                                     train CategoricalVideoDiscriminator
 
@@ -114,6 +117,7 @@ if __name__ == "__main__":
     spectral_normalization = True
 
     n_content_categories = int(args['--n_content_categories'])
+    content_only_style = args['--content_only_style']
     
     if args['--resnet_without_proj']:
         resnet=True      
@@ -137,7 +141,8 @@ if __name__ == "__main__":
 
     generator = models.VideoGenerator(n_channels, dim_z_content, dim_z_category, dim_z_motion, video_length,
                                       use_cgan_proj_discr=use_cgan_proj_discr, n_categories=n_categories,
-                                      n_content_categories=n_content_categories, resnet=resnet)
+                                      n_content_categories=n_content_categories, resnet=resnet,
+                                      content_only_style=content_only_style)
     print('generator')
     print(generator)
 
