@@ -171,7 +171,7 @@ class Trainer(object):
         real_batch = sample_true()
         batch = Variable(real_batch['images'], requires_grad=False)
         if n_content_categories > 0:
-            real_y = Variable(real_batch['content_categories'], requires_grad=False)
+            real_y_content = Variable(real_batch['content_categories'], requires_grad=False)
         else:
             real_y = Variable(real_batch['categories'], requires_grad=False)
 
@@ -182,10 +182,11 @@ class Trainer(object):
         if use_cgan_proj_discr:
             #real_y = self.one_hot_expand(real_y, self.n_categories, self.video_length)
             #real_y = real_y.expand(self.video_length, real_y.shape[0]).t().flatten()
-            real_labels = discriminator(batch, real_y)
             if n_content_categories > 0:
+                real_labels = discriminator(batch, real_y_content)
                 fake_labels = discriminator(fake_batch.detach(), generated_content_categories)
             else:
+                real_labels = discriminator(batch, real_y)
                 fake_labels = discriminator(fake_batch.detach(), generated_categories)
         else:
             real_labels = discriminator(batch)
@@ -207,7 +208,7 @@ class Trainer(object):
 
         return l_discriminator
 
-    def train_generator(self, image_discriminator, video_discriminator, sample_fake_images, sample_fake_videos, opt):
+    def train_generator(self, image_discriminator, video_discriminator, sample_fake_images, sample_fake_videos, opt, n_content_categories=0):
 
         opt.zero_grad()
 
@@ -217,7 +218,10 @@ class Trainer(object):
         if not self.use_cgan_proj_discr:
             fake_labels, fake_categorical = image_discriminator(fake_batch)
         else:
-            fake_labels = image_discriminator(fake_batch)  
+            if n_content_categories > 0:
+                fake_labels = image_discriminator(fake_batch, generated_content_categories)
+            else:
+                fake_labels = image_discriminator(fake_batch)
         all_ones = self.ones_like(fake_labels)
 
         l_generator = self.gan_criterion(fake_labels, all_ones)
@@ -299,7 +303,7 @@ class Trainer(object):
             # train generator
             l_gen = self.train_generator(image_discriminator, video_discriminator,
                                          sample_fake_image_batch, sample_fake_video_batch,
-                                         opt_generator)
+                                         opt_generator, n_content_categories=self.n_content_categories)
 
             logs['l_gen'] += l_gen.item()#l_gen.data[0]
 
