@@ -748,7 +748,7 @@ class VideoGenerator(nn.Module):
 
     def sample_z_video(self, num_samples, video_len=None, n_content_categories=0):
         z_content = self.sample_z_content(num_samples, video_len)
-        z_category, z_category_labels = self.sample_z_categ(num_samples, video_len)
+        z_category, z_category_labels = self.sample_z_categ(num_samples, video_len, n_content_categories=n_content_categories)
         if n_content_categories > 0:
             z_content_category, z_content_category_labels = self.sample_z_categ(num_samples, video_len, n_content_categories=n_content_categories)
         z_motion = self.sample_z_m(num_samples, video_len)
